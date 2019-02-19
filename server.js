@@ -58,6 +58,9 @@ async function ssr(url) {
 			document.addEventListener("mv-load", async (event) => {
 				await Bliss.ready();
 				await Mavo.inited;
+				Mavo.hooks.add("init-start", mavo => {
+					mavo.element.cloneNode(true /*deep*/);
+				});
 				await Promise.all(Array.from(Mavo.all).map(mavo => mavo.dataLoaded.catch(e => e)));
 				let dirty = true;
 				["domexpression-update-start", "domexpression-update-end", "node-render-start", "node-render-end"].forEach(hookName => {

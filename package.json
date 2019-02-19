@@ -1,0 +1,23 @@
+{
+  "name": "mavo-ssr",
+  "version": "0.1",
+  "description": "Server-side rendering for Mavo apps",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mavoweb/mavo-ssr.git"
+  },
+  "author": "Brian Chen",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/mavoweb/mavo-ssr/issues"
+  },
+  "homepage": "https://github.com/mavoweb/mavo-ssr",
+  "dependencies": {
+    "express": "^4.16.4",
+    "puppeteer": "^1.12.2"
+  }
+}
