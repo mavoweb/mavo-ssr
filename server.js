@@ -14,6 +14,8 @@ const fs = require('fs');
 //
 // finish loading event: investigate mv-load event
 
+const httpProxy = require('http-proxy');
+
 async function ssr(url) {
 	const start = Date.now();
 	// const browser = await puppeteer.launch({headless: false});
@@ -55,12 +57,15 @@ async function ssr(url) {
 		});
 		console.log('done exposing');
 		await page.evaluateOnNewDocument(() => {
+			// let rawNodes = [];
+			// Mavo.hooks.add("init-start", mavo => {
+			// 	console.log("init-start");
+			// 	rawNodes.push(mavo.element.cloneNode(true /*deep*/));
+			// });
 			document.addEventListener("mv-load", async (event) => {
 				await Bliss.ready();
+				console.log(Mavo);
 				await Mavo.inited;
-				Mavo.hooks.add("init-start", mavo => {
-					mavo.element.cloneNode(true /*deep*/);
-				});
 				await Promise.all(Array.from(Mavo.all).map(mavo => mavo.dataLoaded.catch(e => e)));
 				let dirty = true;
 				["domexpression-update-start", "domexpression-update-end", "node-render-start", "node-render-end"].forEach(hookName => {
@@ -76,6 +81,21 @@ async function ssr(url) {
 						window.setTimeout(checkDirty, 500);
 					} else {
 						console.log('mv-load in browser');
+						// const initedElements = document.querySelectorAll(Mavo.init);
+						for (let name in Mavo.all) {
+							const element = Mavo.all[name].element;
+							element.removeAttribute("mv-app");
+							element.removeAttribute("data-mv-app");
+						}
+						// const templateElement = document.createElement("template");
+						const templateElement = document.createElement("template");
+						Mavo.rawNodes.forEach(rawNode => {
+							console.log("raw node received");
+							console.log(rawNode);
+							templateElement.content.appendChild(rawNode);
+						});
+						document.head.appendChild(templateElement);
+
 						window.onMvLoad();
 					}
 				};
@@ -119,7 +139,12 @@ if (process.argv.length >= 4 && process.argv[2] === "server") {
 		res.set('Server-Timing', `Prerender;dur=${ttRenderMs};desc="Headless render time (ms)"`);
 		return res.status(200).send(html); // Serve prerendered page as response.
 	});
-	app.use(express.static('dist'));
+	const apiProxy = httpProxy.createProxyServer();
+	app.all("/dist/*", function(req, res) {
+		console.log('passing through to server');
+		apiProxy.web(req, res, {target: localServer});
+	});
+	// app.use(express.static('dist'));
 	// app.use('/dist', express.static('dist'));
 
 	app.listen(8080, () => console.log('Server started. Press Ctrl+C to quit'));
