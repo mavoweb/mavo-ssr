@@ -44,16 +44,12 @@ async function ssr(url) {
 
 	// https://github.com/GoogleChrome/puppeteer/blob/master/examples/custom-event.js
 	const html = await new Promise(async (resolve) => {
-		let neededLoads = 1; // ugh
 		let innerResolve;
 		let resultPromise = new Promise(resolve => { innerResolve = resolve });
 		await page.exposeFunction('onMvLoad', async () => {
-			neededLoads--;
-			if (neededLoads === 0) {
-				const html = await page.content(); // serialized HTML of page DOM.
-				console.log('content obtained');
-				innerResolve(html);
-			}
+			const html = await page.content(); // serialized HTML of page DOM.
+			console.log('content obtained');
+			innerResolve(html);
 		});
 		console.log('done exposing');
 		await page.evaluateOnNewDocument(() => {
@@ -90,7 +86,11 @@ async function ssr(url) {
 				// 	Promise.all(Array.from(Mavo.all).map(mavo => mavo.dataLoaded.catch(e => e)));
 				// });
 			});
+			let mvLoaded = false;
 			document.addEventListener("mv-load", async (event) => {
+				if (mvLoaded) return;
+				mvLoaded = true;
+
 				await Bliss.ready();
 				console.log(Mavo);
 				await Mavo.inited;
@@ -213,6 +213,10 @@ if (process.argv.length >= 4 && process.argv[2] === "server") {
 	});
 	const apiProxy = httpProxy.createProxyServer();
 	app.all("/dist/*", function(req, res) {
+		console.log('passing through to server');
+		apiProxy.web(req, res, {target: localServer});
+	});
+	app.all("/*.(css|jpg|png|svg)", function(req, res) {
 		console.log('passing through to server');
 		apiProxy.web(req, res, {target: localServer});
 	});
