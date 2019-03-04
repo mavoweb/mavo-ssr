@@ -112,6 +112,7 @@ async function ssr(url) {
 						// const initedElements = document.querySelectorAll(Mavo.init);
 						for (let name in Mavo.all) {
 							const element = Mavo.all[name].element;
+							element.classList.add("mv-ssr-target");
 							// client-side Mavo should not rehydrate
 							// element.removeAttribute("mv-app");
 							// element.removeAttribute("data-mv-app");
@@ -130,6 +131,15 @@ async function ssr(url) {
 						}
 						document.head.appendChild(templateElement);
 
+						const clientStyleElement = document.createElement("style");
+						clientStyleElement.textContent = `
+[mv-progress].mv-ssr-target::after {
+	left: 0;
+	top: 0;
+}
+`;
+						// document.head.appendChild(clientStyleElement);
+
 						const clientScriptElement = document.createElement("script");
 						clientScriptElement.text = `
 Mavo.hooks.add("init-start", function (mavo) {
@@ -140,7 +150,7 @@ Mavo.hooks.add("init-start", function (mavo) {
 		var ssrRawNode = ssrTemplate.content.getElementById(mavo.id);
 		if (ssrRawNode) {
 			mavo.ssrTarget = mavo.element;
-			mavo.ssrTarget.className = "mv-ssr-target";
+			// mavo.ssrTarget.classList. = "mv-ssr-target";
 
 			mavo.element = ssrRawNode;
 			// mavo.element = ssrRawNode.cloneNode(true);
@@ -159,7 +169,7 @@ Mavo.hooks.add("init-start", function (mavo) {
 
 	mavo.dataLoaded.then(function () {
 		console.log("client dataLoaded");
-		mavo.element.className = "mv-ssr-ok";
+		mavo.element.classList.add("mv-ssr-ok");
 		// mavo.ssrQuarantine.parentNode.removeChild(mavo.ssrQuarantine);
 		mavo.ssrTarget.parentNode.replaceChild(mavo.element, mavo.ssrTarget);
 	});
@@ -213,11 +223,11 @@ if (process.argv.length >= 4 && process.argv[2] === "server") {
 	});
 	const apiProxy = httpProxy.createProxyServer();
 	app.all("/dist/*", function(req, res) {
-		console.log('passing through to server');
+		console.log('passing through to server: ' + req.path);
 		apiProxy.web(req, res, {target: localServer});
 	});
 	app.all("/*.(css|jpg|png|svg)", function(req, res) {
-		console.log('passing through to server');
+		console.log('passing through to server: ' + req.path);
 		apiProxy.web(req, res, {target: localServer});
 	});
 	// app.use(express.static('dist'));
