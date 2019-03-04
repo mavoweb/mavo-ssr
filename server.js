@@ -57,11 +57,39 @@ async function ssr(url) {
 		});
 		console.log('done exposing');
 		await page.evaluateOnNewDocument(() => {
-			// let rawNodes = [];
+			console.log("fresh");
+			console.log(self.Mavo);
+			// console.log(document.body.innerHTML);
 			// Mavo.hooks.add("init-start", mavo => {
 			// 	console.log("init-start");
 			// 	rawNodes.push(mavo.element.cloneNode(true /*deep*/));
 			// });
+
+
+			// THINGS TO TRY:
+			// listen to dom content loaded?
+			// listen to load event of script tag? script[src*=mavo]?
+			// add script tag "manually"? (script could be async but maybe ignore)
+				// then remove the script tag before static rendering!
+			// replace static with fresh copy on mv-load
+
+			let rawNodes = {};
+			document.addEventListener("DOMContentLoaded", event => {
+				console.log("DOMContentLoaded");
+				console.log(document.body.innerHTML);
+				console.log(self.Mavo);
+				self.Mavo.hooks.add("init-start", mavo => {
+					console.log("init-start");
+					const clone = mavo.element.cloneNode(true /*deep*/);
+					console.log("init-start the clone is");
+					console.log(clone);
+					rawNodes[mavo.id] = clone;
+				});
+
+				// Mavo.inited.then(() => {
+				// 	Promise.all(Array.from(Mavo.all).map(mavo => mavo.dataLoaded.catch(e => e)));
+				// });
+			});
 			document.addEventListener("mv-load", async (event) => {
 				await Bliss.ready();
 				console.log(Mavo);
@@ -84,17 +112,61 @@ async function ssr(url) {
 						// const initedElements = document.querySelectorAll(Mavo.init);
 						for (let name in Mavo.all) {
 							const element = Mavo.all[name].element;
-							element.removeAttribute("mv-app");
-							element.removeAttribute("data-mv-app");
+							// client-side Mavo should not rehydrate
+							// element.removeAttribute("mv-app");
+							// element.removeAttribute("data-mv-app");
+							// ^ don't do this: could wreck CSS selectors.
+							// element.addAttribute("mv-ssr", name);
 						}
 						// const templateElement = document.createElement("template");
 						const templateElement = document.createElement("template");
-						Mavo.rawNodes.forEach(rawNode => {
+						templateElement.id = "mv-ssr-template";
+						for (let rawId in rawNodes) {
+							const rawNode = rawNodes[rawId];
+							rawNode.id = rawId;
 							console.log("raw node received");
 							console.log(rawNode);
 							templateElement.content.appendChild(rawNode);
-						});
+						}
 						document.head.appendChild(templateElement);
+
+						const clientScriptElement = document.createElement("script");
+						clientScriptElement.text = `
+Mavo.hooks.add("init-start", function (mavo) {
+	console.log("client init-start hook");
+	var ssrTemplate = document.getElementById("mv-ssr-template");
+	if (ssrTemplate) {
+		console.log("client swaparoo");
+		var ssrRawNode = ssrTemplate.content.getElementById(mavo.id);
+		if (ssrRawNode) {
+			mavo.ssrTarget = mavo.element;
+			mavo.ssrTarget.className = "mv-ssr-target";
+
+			mavo.element = ssrRawNode;
+			// mavo.element = ssrRawNode.cloneNode(true);
+			// mavo.ssrQuarantine = document.createElement("div");
+			// mavo.ssrQuarantine.className = "quarantine";
+			// mavo.ssrQuarantine.style.display = "none";
+			// mavo.ssrQuarantine.appendChild(mavo.element);
+			// mavo.ssrTarget.appendChild(mavo.ssrQuarantine);
+
+			console.log("ssr target");
+			console.log(mavo.ssrTarget);
+			console.log("ssr element");
+			console.log(mavo.element);
+		}
+	}
+
+	mavo.dataLoaded.then(function () {
+		console.log("client dataLoaded");
+		mavo.element.className = "mv-ssr-ok";
+		// mavo.ssrQuarantine.parentNode.removeChild(mavo.ssrQuarantine);
+		mavo.ssrTarget.parentNode.replaceChild(mavo.element, mavo.ssrTarget);
+	});
+});
+`;
+
+						document.body.appendChild(clientScriptElement);
 
 						window.onMvLoad();
 					}
@@ -169,3 +241,5 @@ if (process.argv.length >= 4 && process.argv[2] === "server") {
 	console.log("node server.js server <port>");
 	console.log("node server.js prerender <port> <page>");
 }
+
+// we could make a server that prerenders as a service
