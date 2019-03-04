@@ -4,17 +4,33 @@
 // await Mavo.inited;
 // await Promise.all(Array.from(Mavo.all).map(mavo => mavo.dataLoaded)) // but this fails if any one promise fails
 // await Promise.all(Array.from(Mavo.all).map(mavo => mavo.dataLoaded.catch(e => e)))
-
+//
 const express = require('express');
 const puppeteer = require('puppeteer');
 const fs = require('fs');
+const httpProxy = require('http-proxy');
+
 // assumes something locally serving files from the above address for
 // puppeteer's headless chrome to view;
 // python -m SimpleHTTPServer 8002 works fine
 //
 // finish loading event: investigate mv-load event
 
-const httpProxy = require('http-proxy');
+const makeListenToFreePort = (app, message, firstPort) => {
+	let ret = Promise.reject();
+	for (let portOffset = 0; portOffset < 10; portOffset++) {
+		const port = firstPort + portOffset;
+		ret = ret.catch(() => new Promise((resolve, reject) => {
+			app.listen(port, () => {
+				console.log(message + " listening on port " + port);
+				resolve(port);
+			});
+			app.on('error', reject);
+		}));
+	}
+	return ret;
+};
+
 
 async function ssr(url) {
 	const start = Date.now();
@@ -205,35 +221,38 @@ Mavo.hooks.add("init-start", function (mavo) {
 }
 
 if (process.argv.length >= 4 && process.argv[2] === "server") {
-	const app = express();
-	const port = process.argv[3];
+	const staticApp = express();
+	staticApp.use(express.static(process.argv[3]));
+	makeListenToFreePort(staticApp, "static server", 8000).then((staticPort) => {
+		const app = express();
 
-	const localServer = `http://localhost:${port}/`;
-	app.get('/:page.html', async (req, res, next) => {
-		const {html, ttRenderMs} = await ssr(`${localServer}${req.params.page}.html`);
-		// Add Server-Timing! See https://w3c.github.io/server-timing/.
-		res.set('Server-Timing', `Prerender;dur=${ttRenderMs};desc="Headless render time (ms)"`);
-		return res.status(200).send(html); // Serve prerendered page as response.
-	});
-	app.get('/restaurants/', async (req, res, next) => {
-		const {html, ttRenderMs} = await ssr(`${localServer}restaurants/`);
-		// Add Server-Timing! See https://w3c.github.io/server-timing/.
-		res.set('Server-Timing', `Prerender;dur=${ttRenderMs};desc="Headless render time (ms)"`);
-		return res.status(200).send(html); // Serve prerendered page as response.
-	});
-	const apiProxy = httpProxy.createProxyServer();
-	app.all("/dist/*", function(req, res) {
-		console.log('passing through to server: ' + req.path);
-		apiProxy.web(req, res, {target: localServer});
-	});
-	app.all("/*.(css|jpg|png|svg)", function(req, res) {
-		console.log('passing through to server: ' + req.path);
-		apiProxy.web(req, res, {target: localServer});
-	});
-	// app.use(express.static('dist'));
-	// app.use('/dist', express.static('dist'));
+		const localServer = `http://localhost:${staticPort}/`;
+		app.get('/:page.html', async (req, res, next) => {
+			const {html, ttRenderMs} = await ssr(`${localServer}${req.params.page}.html`);
+			// Add Server-Timing! See https://w3c.github.io/server-timing/.
+			res.set('Server-Timing', `Prerender;dur=${ttRenderMs};desc="Headless render time (ms)"`);
+			return res.status(200).send(html); // Serve prerendered page as response.
+		});
+		app.get('/restaurants/', async (req, res, next) => {
+			const {html, ttRenderMs} = await ssr(`${localServer}restaurants/`);
+			// Add Server-Timing! See https://w3c.github.io/server-timing/.
+			res.set('Server-Timing', `Prerender;dur=${ttRenderMs};desc="Headless render time (ms)"`);
+			return res.status(200).send(html); // Serve prerendered page as response.
+		});
+		const apiProxy = httpProxy.createProxyServer();
+		app.all("/dist/*", function(req, res) {
+			console.log('passing through to server: ' + req.path);
+			apiProxy.web(req, res, {target: localServer});
+		});
+		app.all("/*.(css|jpg|png|svg)", function(req, res) {
+			console.log('passing through to server: ' + req.path);
+			apiProxy.web(req, res, {target: localServer});
+		});
+		// app.use(express.static('dist'));
+		// app.use('/dist', express.static('dist'));
 
-	app.listen(8080, () => console.log('Server started. Press Ctrl+C to quit'));
+		makeListenToFreePort(app, "SSR server", 8080);
+	});
 } else if (process.argv.length >= 5 && process.argv[2] === "prerender") {
 	const port = process.argv[3];
 	const path = process.argv[4];
@@ -252,7 +271,7 @@ if (process.argv.length >= 4 && process.argv[2] === "server") {
 		});
 	})();
 } else {
-	console.log("node server.js server <port>");
+	console.log("node server.js server <path to static root>");
 	console.log("node server.js prerender <port> <page>");
 }
 
