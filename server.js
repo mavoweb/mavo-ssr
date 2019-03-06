@@ -15,6 +15,8 @@ const makeListenToFreePort = (app, message, firstPort, doUnref) => {
 				resolve(port);
 			});
 			if (doUnref) {
+				// unref'd servers will not prevent the node script from
+				// terminating by virtue of running
 				server.unref();
 			}
 			server.on('error', (e) => {
@@ -55,21 +57,14 @@ async function ssr(url) {
 
 	// https://github.com/GoogleChrome/puppeteer/blob/master/examples/custom-event.js
 	const html = await new Promise(async (resolve) => {
-		let innerResolve;
-		let resultPromise = new Promise(resolve => { innerResolve = resolve });
 		await page.exposeFunction('onMvLoad', async () => {
-			const html = await page.content(); // serialized HTML of page DOM.
-			console.log('content obtained');
-			innerResolve(html);
+			resolve(await page.content()); // serialized HTML of page DOM.
 		});
 		await page.evaluateOnNewDocument(() => {
-
 			let rawNodes = {};
 			document.addEventListener("DOMContentLoaded", event => {
-				console.log("DOMContentLoaded");
 				self.Mavo.hooks.add("init-start", mavo => {
 					const clone = mavo.element.cloneNode(true /*deep*/);
-					console.log("init-start hook");
 					rawNodes[mavo.id] = clone;
 				});
 			});
@@ -79,7 +74,6 @@ async function ssr(url) {
 				mvLoaded = true;
 
 				await Bliss.ready();
-				console.log(Mavo);
 				await Mavo.inited;
 				await Promise.all(Array.from(Mavo.all).map(mavo => mavo.dataLoaded.catch(e => e)));
 				let dirty = true;
@@ -90,11 +84,9 @@ async function ssr(url) {
 				});
 				const checkDirty = () => {
 					if (dirty) {
-						console.log('check: still dirty');
 						dirty = false;
 						window.setTimeout(checkDirty, 500);
 					} else {
-						console.log('mv-load in browser');
 						for (let name in Mavo.all) {
 							const element = Mavo.all[name].element;
 							element.classList.add("mv-ssr-target");
@@ -107,8 +99,6 @@ async function ssr(url) {
 						for (let rawId in rawNodes) {
 							const rawNode = rawNodes[rawId];
 							rawNode.id = rawId;
-							console.log("raw node received");
-							console.log(rawNode);
 							templateElement.content.appendChild(rawNode);
 						}
 						document.head.appendChild(templateElement);
@@ -125,24 +115,16 @@ async function ssr(url) {
 						const clientScriptElement = document.createElement("script");
 						clientScriptElement.text = `
 Mavo.hooks.add("init-start", function (mavo) {
-	console.log("client init-start hook");
 	var ssrTemplate = document.getElementById("mv-ssr-template");
 	if (ssrTemplate) {
-		console.log("client swaparoo");
 		var ssrRawNode = ssrTemplate.content.getElementById(mavo.id);
 		if (ssrRawNode) {
 			mavo.ssrTarget = mavo.element;
 			mavo.element = ssrRawNode;
-
-			console.log("ssr target");
-			console.log(mavo.ssrTarget);
-			console.log("ssr element");
-			console.log(mavo.element);
 		}
 	}
 
 	mavo.dataLoaded.then(function () {
-		console.log("client dataLoaded");
 		mavo.element.classList.add("mv-ssr-ok");
 		mavo.ssrTarget.parentNode.replaceChild(mavo.element, mavo.ssrTarget);
 	});
@@ -157,17 +139,7 @@ Mavo.hooks.add("init-start", function (mavo) {
 				window.setTimeout(checkDirty, 500);
 			});
 		});
-		console.log('done evaluating to add listener');
-		try {
-			await page.goto(url, {waitUntil: 'networkidle0'});
-			console.log('done goto');
-			const result = await resultPromise;
-			console.log('done resolving resultPromise; let us resolve result!');
-			resolve(result);
-		} catch (e) {
-			console.log('goto failed');
-			console.log(e);
-		}
+		page.goto(url, {waitUntil: 'networkidle0'});
 	});
 	await browser.close();
 
