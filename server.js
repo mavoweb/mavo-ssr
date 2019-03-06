@@ -5,15 +5,19 @@ const puppeteer = require('puppeteer');
 const fs = require('fs');
 const httpProxy = require('http-proxy');
 
-const makeListenToFreePort = (app, message, firstPort) => {
+const makeListenToFreePort = (app, message, firstPort, doUnref) => {
 	let ret = Promise.reject();
 	for (let portOffset = 0; portOffset < 10; portOffset++) {
 		const port = firstPort + portOffset;
 		ret = ret.catch(() => new Promise((resolve, reject) => {
-			app.listen(port, () => {
+			const server = app.listen(port, () => {
 				console.log(message + " listening on port " + port);
 				resolve(port);
-			}).on('error', (e) => {
+			});
+			if (doUnref) {
+				server.unref();
+			}
+			server.on('error', (e) => {
 				console.log(e);
 				reject(e);
 			});
@@ -30,19 +34,19 @@ async function ssr(url) {
 	const page = await browser.newPage();
 
 	// 1. Intercept network requests.
-	// await page.setRequestInterception(true);
+	await page.setRequestInterception(true);
 
-	// page.on('request', req => {
-	// 	// 2. Ignore requests for resources that don't produce DOM
-	// 	// (images, stylesheets, media).
-	// 	const whitelist = ['document', 'script', 'xhr', 'fetch'];
-	// 	if (!whitelist.includes(req.resourceType())) {
-	// 		return req.abort();
-	// 	}
+	page.on('request', req => {
+		// 2. Ignore requests for resources that don't produce DOM
+		// (images, stylesheets, media).
+		const whitelist = ['document', 'script', 'xhr', 'fetch'];
+		if (!whitelist.includes(req.resourceType())) {
+			return req.abort();
+		}
 
-	// 	// 3. Pass through all other requests.
-	// 	req.continue();
-	// });
+		// 3. Pass through all other requests.
+		req.continue();
+	});
 
 	// debugging
 	page.on('console', msg => console.log('PAGE LOG:', msg.text()));
@@ -173,10 +177,14 @@ Mavo.hooks.add("init-start", function (mavo) {
 	return {html, ttRenderMs};
 }
 
-if (process.argv.length >= 4 && process.argv[2] === "server") {
+const makeStaticAppAndGetPort = (path) => {
 	const staticApp = express();
-	staticApp.use(express.static(process.argv[3]));
-	makeListenToFreePort(staticApp, "static server", 8000).then((staticPort) => {
+	staticApp.use(express.static(path));
+	return makeListenToFreePort(staticApp, "static server", 8000, true);
+};
+
+if (process.argv.length >= 4 && process.argv[2] === "server") {
+	makeStaticAppAndGetPort(process.argv[3]).then((staticPort) => {
 		const app = express();
 
 		const localServer = `http://localhost:${staticPort}/`;
@@ -205,10 +213,9 @@ if (process.argv.length >= 4 && process.argv[2] === "server") {
 		makeListenToFreePort(app, "SSR server", 8080);
 	});
 } else if (process.argv.length >= 5 && process.argv[2] === "prerender") {
-	const port = process.argv[3];
-	const path = process.argv[4];
-	const localServer = `http://localhost:${port}/`;
-	(async() => {
+	makeStaticAppAndGetPort(process.argv[3]).then(async(staticPort) => {
+		const localServer = `http://localhost:${staticPort}/`;
+		const path = process.argv[4];
 		const {html, ttRenderMs} = await ssr(`${localServer}${path}`);
 		await new Promise((resolve, reject) => {
 			const file = path.replace(/[^-_.a-zA-Z0-9]/g, "_");
@@ -220,10 +227,10 @@ if (process.argv.length >= 4 && process.argv[2] === "server") {
 				}
 			});
 		});
-	})();
+	});
 } else {
 	console.log("node server.js server <path to static root>");
-	console.log("node server.js prerender <port> <page>");
+	console.log("node server.js prerender <path to static root> <page>");
 }
 
 // we could make a server that prerenders as a service
