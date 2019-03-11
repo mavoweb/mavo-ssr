@@ -185,19 +185,17 @@ if (process.argv.length >= 4 && process.argv[2] === "server") {
 		makeListenToFreePort(app, "SSR server", 8080);
 	});
 } else if (process.argv.length >= 5 && process.argv[2] === "prerender") {
-	makeStaticAppAndGetPort(process.argv[3]).then(async(staticPort) => {
+	makeStaticAppAndGetPort(process.argv[3]).then((staticPort) => {
 		const localServer = `http://localhost:${staticPort}/`;
 		const path = process.argv[4];
 		const {html, ttRenderMs} = await ssr(`${localServer}${path}`);
-		await new Promise((resolve, reject) => {
-			const file = path.replace(/[^-_.a-zA-Z0-9]/g, "_");
-			fs.writeFile(`./${file}`, html, (err) => {
-				if (err) {
-					reject(err);
-				} else {
-					resolve();
-				}
-			});
+		const file = path.replace(/[^-_.a-zA-Z0-9]/g, "_");
+		fs.writeFile(`./${file}`, html, (err) => {
+			if (err) {
+				reject(err);
+			} else {
+				resolve();
+			}
 		});
 	});
 } else {
