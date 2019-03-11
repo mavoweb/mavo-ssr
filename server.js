@@ -185,7 +185,7 @@ if (process.argv.length >= 4 && process.argv[2] === "server") {
 		makeListenToFreePort(app, "SSR server", 8080);
 	});
 } else if (process.argv.length >= 5 && process.argv[2] === "prerender") {
-	makeStaticAppAndGetPort(process.argv[3]).then((staticPort) => {
+	makeStaticAppAndGetPort(process.argv[3]).then(async (staticPort) => {
 		const localServer = `http://localhost:${staticPort}/`;
 		const path = process.argv[4];
 		const {html, ttRenderMs} = await ssr(`${localServer}${path}`);
