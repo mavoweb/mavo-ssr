@@ -117,17 +117,29 @@ async function ssr(url) {
 Mavo.hooks.add("init-start", function (mavo) {
 	var ssrTemplate = document.getElementById("mv-ssr-template");
 	if (ssrTemplate) {
+		// var oldDisplay;
 		var ssrRawNode = ssrTemplate.content.getElementById(mavo.id);
 		if (ssrRawNode) {
+			// console.log("cloning...");
+			// var ssrCopy = ssrRawNode.cloneNode(true);
+			// mavo.element.appendChild(ssrCopy);
+			// oldDisplay = ssrCopy.style.display;
+			// ssrCopy.style.display = "none";
+
+			// console.log("transplanting...");
 			mavo.ssrTarget = mavo.element;
+			// mavo.element = ssrCopy;
 			mavo.element = ssrRawNode;
+
+			mavo.dataLoaded.then(function () {
+				// console.log("mavo.dataLoaded happened; setting to oldDisplay: " + oldDisplay);
+				console.log("mavo.dataLoaded happened");
+				// mavo.element.style.display = oldDisplay;
+				mavo.element.classList.add("mv-ssr-ok");
+				mavo.ssrTarget.parentNode.replaceChild(mavo.element, mavo.ssrTarget);
+			});
 		}
 	}
-
-	mavo.dataLoaded.then(function () {
-		mavo.element.classList.add("mv-ssr-ok");
-		mavo.ssrTarget.parentNode.replaceChild(mavo.element, mavo.ssrTarget);
-	});
 });
 `;
 
@@ -177,7 +189,7 @@ if (process.argv.length >= 4 && process.argv[2] === "server") {
 			console.log('passing through to server: ' + req.path);
 			apiProxy.web(req, res, {target: localServer});
 		});
-		app.all("/*.(css|jpg|png|svg)", function(req, res) {
+		app.all("/*.(css|jpg|png|svg|js)", function(req, res) {
 			console.log('passing through to server: ' + req.path);
 			apiProxy.web(req, res, {target: localServer});
 		});
@@ -204,3 +216,8 @@ if (process.argv.length >= 4 && process.argv[2] === "server") {
 }
 
 // we could make a server that prerenders as a service
+//
+// try mutationobserver? (see prerender.io tweet)
+// / test multiple apps
+// separate template tag per app?
+// try last child
