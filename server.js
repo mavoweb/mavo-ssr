@@ -134,9 +134,26 @@ Mavo.hooks.add("init-start", function (mavo) {
 			mavo.dataLoaded.then(function () {
 				// console.log("mavo.dataLoaded happened; setting to oldDisplay: " + oldDisplay);
 				console.log("mavo.dataLoaded happened");
-				// mavo.element.style.display = oldDisplay;
-				mavo.element.classList.add("mv-ssr-ok");
-				mavo.ssrTarget.parentNode.replaceChild(mavo.element, mavo.ssrTarget);
+				var dirty = true;
+				["domexpression-update-start", "domexpression-update-end", "node-render-start", "node-render-end"].forEach(hookName => {
+					Mavo.hooks.add(hookName, (env) => {
+						if (env.context === mavo) {
+							dirty = true;
+						}
+					});
+				});
+				var checkDirty = function () {
+					if (dirty) {
+						dirty = false;
+						window.setTimeout(checkDirty, 500);
+					} else {
+						console.log("mavo ssr full loading done");
+						// mavo.element.style.display = oldDisplay;
+						mavo.element.classList.add("mv-ssr-ok");
+						mavo.ssrTarget.parentNode.replaceChild(mavo.element, mavo.ssrTarget);
+					}
+				};
+				window.setTimeout(checkDirty, 500);
 			});
 		}
 	}
