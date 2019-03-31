@@ -61,6 +61,51 @@ async function ssr(url) {
 			resolve(await page.content()); // serialized HTML of page DOM.
 		});
 		await page.evaluateOnNewDocument(() => {
+
+			const CLIENT_SCRIPT = `
+			Mavo.hooks.add("init-start", function (mavo) {
+				var ssrTemplate = document.getElementById("mv-ssr-template");
+				if (ssrTemplate) {
+					// var oldDisplay;
+					var ssrRawNode = ssrTemplate.content.getElementById(mavo.id);
+					if (ssrRawNode) {
+						// console.log("cloning...");
+						// var ssrCopy = ssrRawNode.cloneNode(true);
+						// mavo.element.appendChild(ssrCopy);
+						// oldDisplay = ssrCopy.style.display;
+						// ssrCopy.style.display = "none";
+
+						// console.log("transplanting...");
+						mavo.ssrTarget = mavo.element;
+						// mavo.element = ssrCopy;
+						mavo.element = ssrRawNode;
+
+						mavo.dataLoaded.then(function () {
+							// console.log("mavo.dataLoaded happened; setting to oldDisplay: " + oldDisplay);
+							console.log("mavo.dataLoaded happened");
+							var finishTimeoutID;
+							var finish = function () {
+								finishTimeoutID = undefined;
+								console.log("mavo ssr full loading done");
+								// mavo.element.style.display = oldDisplay;
+								mavo.element.classList.add("mv-ssr-ok");
+								mavo.ssrTarget.parentNode.replaceChild(mavo.element, mavo.ssrTarget);
+							};
+							finishTimeoutID = window.setTimeout(finish, 500);
+							["domexpression-update-start", "domexpression-update-end", "node-render-start", "node-render-end"].forEach(hookName => {
+								Mavo.hooks.add(hookName, (env) => {
+									if (finishTimeoutID !== undefined && env.context === mavo) {
+										window.clearTimeout(finishTimeoutID);
+										finishTimeoutID = window.setTimeout(finish, 500);
+									}
+								});
+							});
+						});
+					}
+				}
+			});
+			`;
+
 			let rawNodes = {};
 			document.addEventListener("DOMContentLoaded", event => {
 				self.Mavo.hooks.add("init-start", mavo => {
@@ -76,96 +121,49 @@ async function ssr(url) {
 				await Bliss.ready();
 				await Mavo.inited;
 				await Promise.all(Array.from(Mavo.all).map(mavo => mavo.dataLoaded.catch(e => e)));
-				let dirty = true;
+				let finishTimeoutID;
+				const finish = () => {
+					finishTimeoutID = undefined;
+					for (let name in Mavo.all) {
+						const element = Mavo.all[name].element;
+						element.classList.add("mv-ssr-target");
+						// don't prevent rehydration here by removing
+						// mv-app attribute as that might mess with CSS
+						// selectors
+					}
+					const templateElement = document.createElement("template");
+					templateElement.id = "mv-ssr-template";
+					for (let rawId in rawNodes) {
+						const rawNode = rawNodes[rawId];
+						rawNode.id = rawId;
+						templateElement.content.appendChild(rawNode);
+					}
+					document.head.appendChild(templateElement);
+
+					// const clientStyleElement = document.createElement("style");
+					// clientStyleElement.textContent = `
+					// [mv-progress].mv-ssr-target::after {
+					// 	left: 0;
+					// 	top: 0;
+					// }
+					// `;
+					// // document.head.appendChild(clientStyleElement);
+
+					const clientScriptElement = document.createElement("script");
+					clientScriptElement.text = CLIENT_SCRIPT;
+					document.body.appendChild(clientScriptElement);
+
+					window.onMvLoad();
+				};
+				finishTimeoutID = window.setTimeout(finish, 500);
 				["domexpression-update-start", "domexpression-update-end", "node-render-start", "node-render-end"].forEach(hookName => {
 					Mavo.hooks.add(hookName, () => {
-						dirty = true;
-					});
-				});
-				const checkDirty = () => {
-					if (dirty) {
-						dirty = false;
-						window.setTimeout(checkDirty, 500);
-					} else {
-						for (let name in Mavo.all) {
-							const element = Mavo.all[name].element;
-							element.classList.add("mv-ssr-target");
-							// don't prevent rehydration here by removing
-							// mv-app attribute as that might mess with CSS
-							// selectors
-						}
-						const templateElement = document.createElement("template");
-						templateElement.id = "mv-ssr-template";
-						for (let rawId in rawNodes) {
-							const rawNode = rawNodes[rawId];
-							rawNode.id = rawId;
-							templateElement.content.appendChild(rawNode);
-						}
-						document.head.appendChild(templateElement);
-
-						const clientStyleElement = document.createElement("style");
-						clientStyleElement.textContent = `
-[mv-progress].mv-ssr-target::after {
-	left: 0;
-	top: 0;
-}
-`;
-						// document.head.appendChild(clientStyleElement);
-
-						const clientScriptElement = document.createElement("script");
-						clientScriptElement.text = `
-Mavo.hooks.add("init-start", function (mavo) {
-	var ssrTemplate = document.getElementById("mv-ssr-template");
-	if (ssrTemplate) {
-		// var oldDisplay;
-		var ssrRawNode = ssrTemplate.content.getElementById(mavo.id);
-		if (ssrRawNode) {
-			// console.log("cloning...");
-			// var ssrCopy = ssrRawNode.cloneNode(true);
-			// mavo.element.appendChild(ssrCopy);
-			// oldDisplay = ssrCopy.style.display;
-			// ssrCopy.style.display = "none";
-
-			// console.log("transplanting...");
-			mavo.ssrTarget = mavo.element;
-			// mavo.element = ssrCopy;
-			mavo.element = ssrRawNode;
-
-			mavo.dataLoaded.then(function () {
-				// console.log("mavo.dataLoaded happened; setting to oldDisplay: " + oldDisplay);
-				console.log("mavo.dataLoaded happened");
-				var dirty = true;
-				["domexpression-update-start", "domexpression-update-end", "node-render-start", "node-render-end"].forEach(hookName => {
-					Mavo.hooks.add(hookName, (env) => {
-						if (env.context === mavo) {
-							dirty = true;
+						if (finishTimeoutID) {
+							window.clearTimeout(finishTimeoutID);
+							finishTimeoutID = window.setTimeout(finish, 500);
 						}
 					});
 				});
-				var checkDirty = function () {
-					if (dirty) {
-						dirty = false;
-						window.setTimeout(checkDirty, 500);
-					} else {
-						console.log("mavo ssr full loading done");
-						// mavo.element.style.display = oldDisplay;
-						mavo.element.classList.add("mv-ssr-ok");
-						mavo.ssrTarget.parentNode.replaceChild(mavo.element, mavo.ssrTarget);
-					}
-				};
-				window.setTimeout(checkDirty, 500);
-			});
-		}
-	}
-});
-`;
-
-						document.body.appendChild(clientScriptElement);
-
-						window.onMvLoad();
-					}
-				};
-				window.setTimeout(checkDirty, 500);
 			});
 		});
 		page.goto(url, {waitUntil: 'networkidle0'});
