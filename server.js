@@ -152,7 +152,7 @@ async function ssr(url) {
 					// selectors
 
 					// requires Mavo support for something like this
-					element.classList.add("mv-no-loading");
+					element.classList.add("mv-no-hiding-during-loading");
 				}
 				const templateElement = document.createElement("template");
 				templateElement.id = "mv-ssr-template";
@@ -208,63 +208,93 @@ async function ssr(url) {
 	return {html, ttRenderMs};
 }
 
-const makeStaticAppAndGetPort = (path) => {
+const makeStaticAppAndGetPort = (path, staticPort) => {
 	const staticApp = express();
 	staticApp.use(express.static(path));
+	const port = staticPort === undefined ? 8000 : staticPort;
 	return makeListenToFreePort(staticApp, "static server", 8000, true);
 };
 
-if (process.argv.length >= 4 && process.argv[2] === "server") {
-	makeStaticAppAndGetPort(process.argv[3]).then((staticPort) => {
-		const app = express();
+require('yargs').command({
+	command: "serve <path>",
+	desc: "statically serve a Mavo site",
+	builder: (yargs) => {
+		yargs.option('static-port', {
+			default: 8000,
+			describe: "port to internally serve raw static files on",
+			type: 'number',
+		});
+		yargs.option('port', {
+			default: 8080,
+			describe: "port to serve on",
+			type: 'number',
+		});
+	},
+	handler: (argv) => {
+		makeStaticAppAndGetPort(argv.path, argv.staticPort).then((staticPort) => {
+			const app = express();
 
-		const localServer = `http://localhost:${staticPort}/`;
-		app.get('/:page.html', async (req, res, next) => {
-			const {html, ttRenderMs} = await ssr(`${localServer}${req.params.page}.html`);
-			// Add Server-Timing! See https://w3c.github.io/server-timing/.
-			res.set('Server-Timing', `Prerender;dur=${ttRenderMs};desc="Headless render time (ms)"`);
-			return res.status(200).send(html); // Serve prerendered page as response.
-		});
-		app.get('/restaurants/', async (req, res, next) => {
-			const {html, ttRenderMs} = await ssr(`${localServer}restaurants/`);
-			// Add Server-Timing! See https://w3c.github.io/server-timing/.
-			res.set('Server-Timing', `Prerender;dur=${ttRenderMs};desc="Headless render time (ms)"`);
-			return res.status(200).send(html); // Serve prerendered page as response.
-		});
-		const apiProxy = httpProxy.createProxyServer();
-		app.all("/dist/*", function(req, res) {
-			console.log('passing through to server: ' + req.path);
-			apiProxy.web(req, res, {target: localServer});
-		});
-		app.all("/*.(css|jpg|png|svg|js)", function(req, res) {
-			console.log('passing through to server: ' + req.path);
-			apiProxy.web(req, res, {target: localServer});
-		});
+			const localServer = `http://localhost:${staticPort}/`;
+			app.get('/:page.html', async (req, res, next) => {
+				const {html, ttRenderMs} = await ssr(`${localServer}${req.params.page}.html`);
+				// Add Server-Timing! See https://w3c.github.io/server-timing/.
+				res.set('Server-Timing', `Prerender;dur=${ttRenderMs};desc="Headless render time (ms)"`);
+				return res.status(200).send(html); // Serve prerendered page as response.
+			});
+			app.get('/:page/', async (req, res, next) => {
+				const {html, ttRenderMs} = await ssr(`${localServer}${req.params.page}/`);
+				// Add Server-Timing! See https://w3c.github.io/server-timing/.
+				res.set('Server-Timing', `Prerender;dur=${ttRenderMs};desc="Headless render time (ms)"`);
+				return res.status(200).send(html); // Serve prerendered page as response.
+			});
+			const apiProxy = httpProxy.createProxyServer();
+			app.all("/dist/*", function(req, res) {
+				console.log('passing through to server: ' + req.path);
+				apiProxy.web(req, res, {target: localServer});
+			});
+			app.all("/*.(css|jpg|png|svg|js)", function(req, res) {
+				console.log('passing through to server: ' + req.path);
+				apiProxy.web(req, res, {target: localServer});
+			});
 
-		makeListenToFreePort(app, "SSR server", 8080);
-	});
-} else if (process.argv.length >= 5 && process.argv[2] === "prerender") {
-	makeStaticAppAndGetPort(process.argv[3]).then(async (staticPort) => {
-		const localServer = `http://localhost:${staticPort}/`;
-		const path = process.argv[4];
-		const {html, ttRenderMs} = await ssr(`${localServer}${path}`);
-		const file = path.replace(/[^-_.a-zA-Z0-9]/g, "_");
-		fs.writeFile(`./${file}`, html, (err) => {
-			if (err) {
-				reject(err);
-			} else {
-				resolve();
-			}
+			makeListenToFreePort(app, "SSR server", argv.port);
 		});
-	});
-} else {
-	console.log("node server.js server <path to static root>");
-	console.log("node server.js prerender <path to static root> <page>");
-}
-
+	},
+}).command({
+	command: "prerender <path-to-site> <url-path>",
+	desc: "server-side render a Mavo page",
+	builder: (yargs) => {
+		yargs.option('static-port', {
+			default: 8000,
+			describe: "port to internally serve raw static files on",
+			type: 'number',
+		});
+	},
+	handler: (argv) => {
+		makeStaticAppAndGetPort(argv.pathToSite, argv.staticPort).then(async (staticPort) => {
+			const localServer = `http://localhost:${staticPort}/`;
+			const urlPath = argv.urlPath;
+			const {html, ttRenderMs} = await ssr(`${localServer}${urlPath}`);
+			const file = urlPath.replace(/[^-_.a-zA-Z0-9]/g, "_");
+			return await new Promise((resolve, reject) => (fs.writeFile(`./${file}`, html, (err) => {
+				if (err) {
+					reject(err);
+				} else {
+					resolve();
+				}
+			})));
+		});
+	},
+}).demandCommand().recommendCommands().strict().argv;
 // we could make a server that prerenders as a service
 //
 // try mutationobserver? (see prerender.io tweet)
 // / test multiple apps
 // separate template tag per app?
 // try last child
+//...
+// have a last-resort timeout
+// use cases:
+// 1. run this node server; prerender/cache on demand
+// 2. prerender everything ahead of time
+// can we run everything in the browser?
