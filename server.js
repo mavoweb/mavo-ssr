@@ -84,6 +84,8 @@ Mavo.hooks.add("init-start", function (mavo) {
 });
 `;
 
+const LAST_RESORT_TIMEOUT = 30 * 1000; // 30 seconds
+
 async function ssr(url) {
 	const start = Date.now();
 	const browser = await puppeteer.launch({headless: HEADLESS});
@@ -108,6 +110,10 @@ async function ssr(url) {
 	page.on('console', msg => console.log('PAGE LOG:', msg.text()));
 	page.on('error', msg => console.log('PAGE ERR:', msg.message));
 	page.on('pageerror', msg => console.log('PAGE ERR:', msg.message));
+
+	const lastResortTimeout = new Promise((resolve) => {
+		setTimeout(() => resolve(), LAST_RESORT_TIMEOUT);
+	});
 
 	// There are some weird Promise contortions here.
 	let mvLoadResolve;
@@ -199,13 +205,18 @@ async function ssr(url) {
 		});
 	}, CLIENT_SCRIPT, COLOR_DEBUG);
 	await page.goto(url, {waitUntil: 'networkidle0'});
-	const html = await mvLoadPromise;
+	const html = await Promise.race([mvLoadPromise, lastResortTimeout]);
 	await browser.close();
 
-	const ttRenderMs = Date.now() - start;
-	console.info(`Headless rendered page in: ${ttRenderMs}ms`);
+	if (html === undefined) {
+		console.info(`Headless timed out waiting for render!`);
+		return undefined;
+	} else {
+		const ttRenderMs = Date.now() - start;
+		console.info(`Headless rendered page in: ${ttRenderMs}ms`);
 
-	return {html, ttRenderMs};
+		return {html, ttRenderMs};
+	}
 }
 
 const makeStaticAppAndGetPort = (path, staticPort) => {
@@ -235,18 +246,6 @@ require('yargs').command({
 			const app = express();
 
 			const localServer = `http://localhost:${staticPort}/`;
-			app.get('/:page.html', async (req, res, next) => {
-				const {html, ttRenderMs} = await ssr(`${localServer}${req.params.page}.html`);
-				// Add Server-Timing! See https://w3c.github.io/server-timing/.
-				res.set('Server-Timing', `Prerender;dur=${ttRenderMs};desc="Headless render time (ms)"`);
-				return res.status(200).send(html); // Serve prerendered page as response.
-			});
-			app.get('/:page/', async (req, res, next) => {
-				const {html, ttRenderMs} = await ssr(`${localServer}${req.params.page}/`);
-				// Add Server-Timing! See https://w3c.github.io/server-timing/.
-				res.set('Server-Timing', `Prerender;dur=${ttRenderMs};desc="Headless render time (ms)"`);
-				return res.status(200).send(html); // Serve prerendered page as response.
-			});
 			const apiProxy = httpProxy.createProxyServer();
 			app.all("/dist/*", function(req, res) {
 				console.log('passing through to server: ' + req.path);
@@ -255,6 +254,17 @@ require('yargs').command({
 			app.all("/*.(css|jpg|png|svg|js)", function(req, res) {
 				console.log('passing through to server: ' + req.path);
 				apiProxy.web(req, res, {target: localServer});
+			});
+			app.get('/(*(/|.html))?', async (req, res, next) => {
+				const ssrResult = await ssr(`${localServer}${req.path}`);
+				if (ssrResult) {
+					const {html, ttRenderMs} = ssrResult;
+					// Add Server-Timing! See https://w3c.github.io/server-timing/.
+					res.set('Server-Timing', `Prerender;dur=${ttRenderMs};desc="Headless render time (ms)"`);
+					return res.status(200).send(html); // Serve prerendered page as response.
+				} else {
+					return res.status(500).send('Error: server-side rendering Mavo page timed out!');
+				}
 			});
 
 			makeListenToFreePort(app, "SSR server", argv.port);
