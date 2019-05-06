@@ -37,7 +37,7 @@ const makeListenToFreePort = (app, message, firstPort, doUnref) => {
 		const port = firstPort + portOffset;
 		ret = ret.catch(() => new Promise((resolve, reject) => {
 			const server = app.listen(port, () => {
-				console.log(message + " listening on port " + port);
+				console.log(`${message} listening on http://localhost:${port}/`);
 				resolve(port);
 			});
 			if (doUnref) {
