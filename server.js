@@ -54,7 +54,7 @@ const makeListenToFreePort = (app, message, firstPort, doUnref) => {
 	return ret;
 };
 
-const CLIENT_SCRIPT = `
+const makeClientScript = (options) => `
 Mavo.hooks.add("init-start", function (mavo) {
 	// debugger;
 	var ssrTemplate = document.getElementById("mv-ssr-template");
@@ -86,12 +86,12 @@ Mavo.hooks.add("init-start", function (mavo) {
 					mavo.element.classList.add("mv-ssr-done");
 					mavo.ssrTarget.parentNode.replaceChild(mavo.element, mavo.ssrTarget);
 				};
-				finishTimeoutID = window.setTimeout(finish, 500);
+				finishTimeoutID = window.setTimeout(finish, ${options.pollTimeout});
 
 				var callback = function(mutationsList, observer) {
 					if (finishTimeoutID) {
 						window.clearTimeout(finishTimeoutID);
-						finishTimeoutID = window.setTimeout(finish, 500);
+						finishTimeoutID = window.setTimeout(finish, ${options.pollTimeout});
 					}
 				};
 
@@ -135,7 +135,7 @@ async function ssr(url, options) {
 	page.on('pageerror', msg => console.log('PAGE ERR:', msg.message));
 
 	const lastResortTimeout = new Promise((resolve) => {
-		setTimeout(() => resolve(), LAST_RESORT_TIMEOUT);
+		setTimeout(() => resolve(), options.lastResortTimeout);
 	});
 
 	// There are some weird Promise contortions here.
@@ -226,7 +226,7 @@ async function ssr(url, options) {
 				});
 			}
 		});
-	}, CLIENT_SCRIPT, { colorDebug: options.colorDebug });
+	}, makeClientScript({pollTimeout: options.pollTimeout}), {colorDebug: options.colorDebug});
 	await page.goto(url, {waitUntil: 'networkidle0'});
 	const html = await Promise.race([mvLoadPromise, lastResortTimeout]);
 	await browser.close();
@@ -272,6 +272,16 @@ require('yargs').command({
 			describe: "don't display the browser used for server-side rendering (on by default, use --no-headless to disable)",
 			type: 'boolean',
 		});
+		yargs.option('poll-timeout', {
+			describe: "how long to wait without mutations to decide that rendering is finished, in milliseconds",
+			default: 500,
+			type: 'number',
+		});
+		yargs.option('last-resort-timeout', {
+			describe: "how long to wait before aborting rendering, in milliseconds",
+			default: 30000,
+			type: 'number',
+		});
 		yargs.option('cache', {
 			describe: "path to a directory to cache repeated requests in",
 			type: 'string',
@@ -303,6 +313,8 @@ require('yargs').command({
 				const ssrResult = await ssr(`${localServer}${req.path}`, {
 					colorDebug: argv.colorDebug,
 					headless: argv.headless,
+					pollTimeout: argv.pollTimeout,
+					lastResortTimeout: argv.lastResortTimeout,
 				});
 				if (ssrResult) {
 					const {html, ttRenderMs} = ssrResult;
@@ -340,6 +352,16 @@ require('yargs').command({
 			describe: "don't display the browser used for server-side rendering (on by default, use --no-headless to disable)",
 			type: 'boolean',
 		});
+		yargs.option('poll-timeout', {
+			describe: "how long to wait without mutations to decide that rendering is finished, in milliseconds",
+			default: 500,
+			type: 'number',
+		});
+		yargs.option('last-resort-timeout', {
+			describe: "how long to wait before aborting rendering, in milliseconds",
+			default: 30000,
+			type: 'number',
+		});
 	},
 	handler: (argv) => {
 		makeStaticAppAndGetPort(argv.pathToSite, argv.staticPort).then(async (staticPort) => {
@@ -348,6 +370,8 @@ require('yargs').command({
 			const {html, ttRenderMs} = await ssr(`${localServer}${urlPath}`, {
 				colorDebug: argv.colorDebug,
 				headless: argv.headless,
+				pollTimeout: argv.pollTimeout,
+				lastResortTimeout: argv.lastResortTimeout,
 			});
 			const file = urlPath.replace(/[^-_.a-zA-Z0-9]/g, "_");
 			await writeFilePromise(`./${file}`, html);
