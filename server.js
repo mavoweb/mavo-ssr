@@ -352,13 +352,7 @@ require('yargs').command({
 					const {html, ttRenderMs} = ssrResult;
 					if (cacheFile !== undefined) {
 						console.log(`caching version at ${cacheFile}`);
-						try {
-							const dirname = path.dirname(cacheFile);
-							console.log(`mkdir at ${dirname}`);
-							await mkdirRecursivePromise(dirname);
-						} catch (err) {
-							console.error(`mkdir failed: ${err}`);
-						}
+						await mkdirRecursivePromise(path.dirname(cacheFile));
 						await writeFilePromise(cacheFile, html);
 					}
 					// Add Server-Timing! See https://w3c.github.io/server-timing/.
