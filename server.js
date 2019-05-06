@@ -28,9 +28,6 @@ const makeListenToFreePort = (app, message, firstPort, doUnref) => {
 	return ret;
 };
 
-const HEADLESS = true;
-const COLOR_DEBUG = true;
-
 const CLIENT_SCRIPT = `
 Mavo.hooks.add("init-start", function (mavo) {
 	// debugger;
@@ -86,9 +83,9 @@ Mavo.hooks.add("init-start", function (mavo) {
 
 const LAST_RESORT_TIMEOUT = 30 * 1000; // 30 seconds
 
-async function ssr(url) {
+async function ssr(url, options) {
 	const start = Date.now();
-	const browser = await puppeteer.launch({headless: HEADLESS});
+	const browser = await puppeteer.launch({headless: options.headless});
 	const page = await browser.newPage();
 
 	// 1. Intercept network requests.
@@ -129,7 +126,7 @@ async function ssr(url) {
 	// invocations in a promise that gets resolved the instant onMvLoad gets
 	// called, because apparently this interrupts Puppeteer actions halfway
 	// through and causes them to throw errors.
-	await page.evaluateOnNewDocument((CLIENT_SCRIPT, COLOR_DEBUG) => {
+	await page.evaluateOnNewDocument((CLIENT_SCRIPT, options) => {
 		let rawNodes = {};
 		document.addEventListener("DOMContentLoaded", event => {
 			self.Mavo.hooks.add("init-start", mavo => {
@@ -169,7 +166,7 @@ async function ssr(url) {
 				}
 				document.head.appendChild(templateElement);
 
-				if (COLOR_DEBUG) {
+				if (options.colorDebug) {
 					const clientStyleElement = document.createElement("style");
 					clientStyleElement.textContent = `
 					.mv-ssr-target * { color: red !important; }
@@ -203,7 +200,7 @@ async function ssr(url) {
 				});
 			}
 		});
-	}, CLIENT_SCRIPT, COLOR_DEBUG);
+	}, CLIENT_SCRIPT, { colorDebug: options.colorDebug });
 	await page.goto(url, {waitUntil: 'networkidle0'});
 	const html = await Promise.race([mvLoadPromise, lastResortTimeout]);
 	await browser.close();
@@ -240,6 +237,15 @@ require('yargs').command({
 			describe: "port to serve on",
 			type: 'number',
 		});
+		yargs.option('color-debug', {
+			describe: "inject a stylesheet to change the color",
+			type: 'boolean',
+		});
+		yargs.option('headless', {
+			default: true,
+			describe: "don't display the browser used for server-side rendering (on by default, use --no-headless to disable)",
+			type: 'boolean',
+		});
 	},
 	handler: (argv) => {
 		makeStaticAppAndGetPort(argv.path, argv.staticPort).then((staticPort) => {
@@ -256,7 +262,10 @@ require('yargs').command({
 				apiProxy.web(req, res, {target: localServer});
 			});
 			app.get('/(*(/|.html))?', async (req, res, next) => {
-				const ssrResult = await ssr(`${localServer}${req.path}`);
+				const ssrResult = await ssr(`${localServer}${req.path}`, {
+					colorDebug: argv.colorDebug,
+					headless: argv.headless,
+				});
 				if (ssrResult) {
 					const {html, ttRenderMs} = ssrResult;
 					// Add Server-Timing! See https://w3c.github.io/server-timing/.
@@ -279,12 +288,24 @@ require('yargs').command({
 			describe: "port to internally serve raw static files on",
 			type: 'number',
 		});
+		yargs.option('color-debug', {
+			describe: "inject a stylesheet to change the color",
+			type: 'boolean',
+		});
+		yargs.option('headless', {
+			default: true,
+			describe: "don't display the browser used for server-side rendering (on by default, use --no-headless to disable)",
+			type: 'boolean',
+		});
 	},
 	handler: (argv) => {
 		makeStaticAppAndGetPort(argv.pathToSite, argv.staticPort).then(async (staticPort) => {
 			const localServer = `http://localhost:${staticPort}/`;
 			const urlPath = argv.urlPath;
-			const {html, ttRenderMs} = await ssr(`${localServer}${urlPath}`);
+			const {html, ttRenderMs} = await ssr(`${localServer}${urlPath}`, {
+				colorDebug: argv.colorDebug,
+				headless: argv.headless,
+			});
 			const file = urlPath.replace(/[^-_.a-zA-Z0-9]/g, "_");
 			return await new Promise((resolve, reject) => (fs.writeFile(`./${file}`, html, (err) => {
 				if (err) {
