@@ -3,7 +3,33 @@
 const express = require('express');
 const puppeteer = require('puppeteer');
 const fs = require('fs');
+const path = require('path');
 const httpProxy = require('http-proxy');
+
+// weak promise wrappers for fs functions
+// these are available in v10.0 but installing it is annoying
+const mkdirRecursivePromise = (path) => (new Promise((resolve, reject) => (fs.mkdir(path, {recursive: true}, (err) => {
+	if (err) {
+		reject(err);
+	} else {
+		resolve();
+	}
+}))));
+const readFilePromise = (path) => (new Promise((resolve, reject) => (fs.readFile(path, (err, data) => {
+	if (err) {
+		reject(err);
+	} else {
+		resolve(data);
+	}
+}))));
+
+const writeFilePromise = (path, data) => (new Promise((resolve, reject) => (fs.writeFile(path, data, (err) => {
+	if (err) {
+		reject(err);
+	} else {
+		resolve();
+	}
+}))));
 
 const makeListenToFreePort = (app, message, firstPort, doUnref) => {
 	let ret = Promise.reject();
@@ -246,6 +272,10 @@ require('yargs').command({
 			describe: "don't display the browser used for server-side rendering (on by default, use --no-headless to disable)",
 			type: 'boolean',
 		});
+		yargs.option('cache', {
+			describe: "path to a directory to cache repeated requests in",
+			type: 'string',
+		});
 	},
 	handler: (argv) => {
 		makeStaticAppAndGetPort(argv.path, argv.staticPort).then((staticPort) => {
@@ -262,12 +292,25 @@ require('yargs').command({
 				apiProxy.web(req, res, {target: localServer});
 			});
 			app.get('/(*(/|.html))?', async (req, res, next) => {
+				let cacheFile = undefined;
+				if (argv.cache !== undefined) {
+					cacheFile = argv.cache + req.path + (req.path.endsWith('/') ? 'index.html' : '');
+					const cachedContents = await readFilePromise(cacheFile, {encoding: 'utf-8'}).catch(() => undefined);
+					if (cachedContents !== undefined) {
+						return res.status(200).send(cachedContents); // Serve cached version.
+					}
+				}
 				const ssrResult = await ssr(`${localServer}${req.path}`, {
 					colorDebug: argv.colorDebug,
 					headless: argv.headless,
 				});
 				if (ssrResult) {
 					const {html, ttRenderMs} = ssrResult;
+					if (cacheFile !== undefined) {
+						console.log('writing to cache');
+						await mkdirRecursivePromise(path.dirname(cacheFile));
+						await writeFilePromise(cacheFile, html);
+					}
 					// Add Server-Timing! See https://w3c.github.io/server-timing/.
 					res.set('Server-Timing', `Prerender;dur=${ttRenderMs};desc="Headless render time (ms)"`);
 					return res.status(200).send(html); // Serve prerendered page as response.
@@ -307,13 +350,7 @@ require('yargs').command({
 				headless: argv.headless,
 			});
 			const file = urlPath.replace(/[^-_.a-zA-Z0-9]/g, "_");
-			return await new Promise((resolve, reject) => (fs.writeFile(`./${file}`, html, (err) => {
-				if (err) {
-					reject(err);
-				} else {
-					resolve();
-				}
-			})));
+			await writeFilePromise(`./${file}`, html);
 		});
 	},
 }).demandCommand().recommendCommands().strict().argv;
