@@ -8,13 +8,29 @@ const httpProxy = require('http-proxy');
 
 // weak promise wrappers for fs functions
 // these are available in v10.0 but installing it is annoying
-const mkdirRecursivePromise = (path) => (new Promise((resolve, reject) => (fs.mkdir(path, {recursive: true}, (err) => {
+const mkdirPromise = (path) => (new Promise((resolve, reject) => (fs.mkdir(path, {recursive: true}, (err) => {
 	if (err) {
 		reject(err);
 	} else {
 		resolve();
 	}
 }))));
+
+const mkdirRecursivePromise = (p) => {
+    return mkdirPromise(p).catch((err) => {
+        if (err.code === 'ENOENT') {
+            return mkdirRecursivePromise(path.dirname(p)).then(() => mkdirPromise(p));
+        } else {
+            // maybe the directory already exists
+            fs.stat(p, (statErr, stat) => {
+                if (statErr || !stat.isDirectory()) {
+                    // prefer mkdir error over stat error?
+                    return Promise.reject(err);
+                }
+            });
+        }
+    });
+}
 const readFilePromise = (path) => (new Promise((resolve, reject) => (fs.readFile(path, (err, data) => {
 	if (err) {
 		reject(err);
@@ -130,7 +146,9 @@ async function ssr(url, options) {
 	});
 
 	// debugging
-	page.on('console', msg => console.log('PAGE LOG:', msg.text()));
+	if (options.verbose) {
+		page.on('console', msg => console.log('PAGE LOG:', msg.text()));
+	}
 	page.on('error', msg => console.log('PAGE ERR:', msg.message));
 	page.on('pageerror', msg => console.log('PAGE ERR:', msg.message));
 
@@ -232,11 +250,11 @@ async function ssr(url, options) {
 	await browser.close();
 
 	if (html === undefined) {
-		console.info(`Headless timed out waiting for render!`);
+		console.info(`Headless timed out waiting for render of page ${url}!`);
 		return undefined;
 	} else {
 		const ttRenderMs = Date.now() - start;
-		console.info(`Headless rendered page in: ${ttRenderMs}ms`);
+		console.info(`Headless rendered page ${url} in: ${ttRenderMs}ms`);
 
 		return {html, ttRenderMs};
 	}
@@ -274,6 +292,10 @@ const addSSROptions = (yargs) => {
 		default: 30000,
 		type: 'number',
 	});
+	yargs.option('verbose', {
+		describe: "print more things",
+		type: 'boolean',
+	});
 };
 
 require('yargs').command({
@@ -298,11 +320,15 @@ require('yargs').command({
 			const localServer = `http://localhost:${staticPort}/`;
 			const apiProxy = httpProxy.createProxyServer();
 			app.all("/dist/*", function(req, res) {
-				console.log('passing through to server: ' + req.path);
+				if (argv.verbose) {
+					console.log('passing through asset to server: ' + req.path);
+				}
 				apiProxy.web(req, res, {target: localServer});
 			});
 			app.all("/*.(css|jpg|png|svg|js)", function(req, res) {
-				console.log('passing through to server: ' + req.path);
+				if (argv.verbose) {
+					console.log('passing through asset to server: ' + req.path);
+				}
 				apiProxy.web(req, res, {target: localServer});
 			});
 			app.get('/(*(/|.html))?', async (req, res, next) => {
@@ -311,6 +337,7 @@ require('yargs').command({
 					cacheFile = argv.cache + req.path + (req.path.endsWith('/') ? 'index.html' : '');
 					const cachedContents = await readFilePromise(cacheFile, {encoding: 'utf-8'}).catch(() => undefined);
 					if (cachedContents !== undefined) {
+						console.log(`responding with cached version at ${cacheFile}`);
 						return res.status(200).send(cachedContents); // Serve cached version.
 					}
 				}
@@ -319,12 +346,19 @@ require('yargs').command({
 					headless: argv.headless,
 					pollTimeout: argv.pollTimeout,
 					lastResortTimeout: argv.lastResortTimeout,
+					verbose: argv.verbose,
 				});
 				if (ssrResult) {
 					const {html, ttRenderMs} = ssrResult;
 					if (cacheFile !== undefined) {
-						console.log('writing to cache');
-						await mkdirRecursivePromise(path.dirname(cacheFile));
+						console.log(`caching version at ${cacheFile}`);
+						try {
+							const dirname = path.dirname(cacheFile);
+							console.log(`mkdir at ${dirname}`);
+							await mkdirRecursivePromise(dirname);
+						} catch (err) {
+							console.error(`mkdir failed: ${err}`);
+						}
 						await writeFilePromise(cacheFile, html);
 					}
 					// Add Server-Timing! See https://w3c.github.io/server-timing/.
@@ -353,6 +387,7 @@ require('yargs').command({
 				headless: argv.headless,
 				pollTimeout: argv.pollTimeout,
 				lastResortTimeout: argv.lastResortTimeout,
+				verbose: argv.verbose,
 			});
 			const file = urlPath.replace(/[^-_.a-zA-Z0-9]/g, "_");
 			await writeFilePromise(`./${file}`, html);
@@ -371,3 +406,6 @@ require('yargs').command({
 // 1. run this node server; prerender/cache on demand
 // 2. prerender everything ahead of time
 // can we run everything in the browser?
+//
+// mv-app heuristic, don't prerender if Mavo is not invluded
+// check modified times for cached version vs source
