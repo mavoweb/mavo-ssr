@@ -37,7 +37,6 @@ const readFilePromise = (path) => (new Promise((resolve, reject) => (fs.readFile
 		resolve(data);
 	}
 }))));
-
 const writeFilePromise = (path, data) => (new Promise((resolve, reject) => (fs.writeFile(path, data, (err) => {
 	if (err) {
 		reject(err);
@@ -121,8 +120,6 @@ Mavo.hooks.add("init-start", function (mavo) {
 	}
 });
 `;
-
-const LAST_RESORT_TIMEOUT = 30 * 1000; // 30 seconds
 
 async function ssr(url, options) {
 	const start = Date.now();
