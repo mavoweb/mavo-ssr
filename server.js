@@ -15,22 +15,21 @@ const mkdirPromise = (path) => (new Promise((resolve, reject) => (fs.mkdir(path,
 		resolve();
 	}
 }))));
-
 const mkdirRecursivePromise = (p) => {
-    return mkdirPromise(p).catch((err) => {
-        if (err.code === 'ENOENT') {
-            return mkdirRecursivePromise(path.dirname(p)).then(() => mkdirPromise(p));
-        } else {
-            // maybe the directory already exists
-            fs.stat(p, (statErr, stat) => {
-                if (statErr || !stat.isDirectory()) {
-                    // prefer mkdir error over stat error?
-                    return Promise.reject(err);
-                }
-            });
-        }
-    });
-}
+	return mkdirPromise(p).catch((err) => {
+		if (err.code === 'ENOENT') {
+			return mkdirRecursivePromise(path.dirname(p)).then(() => mkdirPromise(p));
+		} else {
+			// maybe the directory already exists
+			fs.stat(p, (statErr, stat) => {
+				if (statErr || !stat.isDirectory()) {
+					// prefer mkdir error over stat error?
+					return Promise.reject(err);
+				}
+			});
+		}
+	});
+};
 const readFilePromise = (path) => (new Promise((resolve, reject) => (fs.readFile(path, (err, data) => {
 	if (err) {
 		reject(err);
