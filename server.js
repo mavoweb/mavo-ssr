@@ -30,7 +30,7 @@ const mkdirRecursivePromise = (p) => {
 		}
 	});
 };
-const readFilePromise = (path) => (new Promise((resolve, reject) => (fs.readFile(path, (err, data) => {
+const readFilePromise = (path) => (new Promise((resolve, reject) => (fs.readFile(path, {encoding: 'utf-8'}, (err, data) => {
 	if (err) {
 		reject(err);
 	} else {
@@ -156,8 +156,8 @@ async function ssr(url, options) {
 	let mvLoadResolve;
 	const mvLoadPromise = new Promise((resolve) => { mvLoadResolve = resolve; });
 	// https://github.com/GoogleChrome/puppeteer/blob/master/examples/custom-event.js
-	await page.exposeFunction('onMvLoad', async () => {
-		mvLoadResolve(await page.content()); // serialized HTML of page DOM.
+	await page.exposeFunction('onMvLoad', async (hasMavo) => {
+		mvLoadResolve({ content: await page.content(), hasMavo: hasMavo }); // serialized HTML of page DOM.
 	});
 	// We must wait for exposeFunction to finish before proceeding to
 	// evaluateOnNewDocument below, since it calls the exposed function;
@@ -169,10 +169,14 @@ async function ssr(url, options) {
 	await page.evaluateOnNewDocument((CLIENT_SCRIPT, options) => {
 		let rawNodes = {};
 		document.addEventListener("DOMContentLoaded", event => {
-			self.Mavo.hooks.add("init-start", mavo => {
-				const clone = mavo.element.cloneNode(true /*deep*/);
-				rawNodes[mavo.id] = clone;
-			});
+			if (self.Mavo) {
+				self.Mavo.hooks.add("init-start", mavo => {
+					const clone = mavo.element.cloneNode(true /*deep*/);
+					rawNodes[mavo.id] = clone;
+				});
+			} else {
+				window.onMvLoad(false);
+			}
 		});
 		let mvLoaded = false;
 		document.addEventListener("mv-load", async (event) => {
@@ -220,7 +224,7 @@ async function ssr(url, options) {
 				clientScriptElement.text = CLIENT_SCRIPT;
 				document.body.appendChild(clientScriptElement);
 
-				window.onMvLoad();
+				window.onMvLoad(true);
 			};
 			finishTimeoutID = window.setTimeout(finish, 500);
 
@@ -242,17 +246,18 @@ async function ssr(url, options) {
 		});
 	}, makeClientScript({pollTimeout: options.pollTimeout}), {colorDebug: options.colorDebug});
 	await page.goto(url, {waitUntil: 'networkidle0'});
-	const html = await Promise.race([mvLoadPromise, lastResortTimeout]);
+	const loadResult = await Promise.race([mvLoadPromise, lastResortTimeout]);
 	await browser.close();
 
-	if (html === undefined) {
+	if (loadResult === undefined) {
 		console.info(`Headless timed out waiting for render of page ${url}!`);
 		return undefined;
 	} else {
+		const {content, hasMavo} = loadResult;
 		const ttRenderMs = Date.now() - start;
-		console.info(`Headless rendered page ${url} in: ${ttRenderMs}ms`);
+		console.info(`Headless rendered page ${url} (${hasMavo ? "with" : "without"} Mavo) to ${content.length} chars in ${ttRenderMs}ms`);
 
-		return {html, ttRenderMs};
+		return {content, hasMavo, ttRenderMs};
 	}
 }
 
@@ -333,7 +338,7 @@ require('yargs').command({
 					cacheFile = argv.cache + req.path + (req.path.endsWith('/') ? 'index.html' : '');
 					const cachedContents = await readFilePromise(cacheFile, {encoding: 'utf-8'}).catch(() => undefined);
 					if (cachedContents !== undefined) {
-						console.log(`responding with cached version at ${cacheFile}`);
+						console.log(`responding with cached version at ${cacheFile} (${cachedContents.length} chars)`);
 						return res.status(200).send(cachedContents); // Serve cached version.
 					}
 				}
@@ -345,15 +350,15 @@ require('yargs').command({
 					verbose: argv.verbose,
 				});
 				if (ssrResult) {
-					const {html, ttRenderMs} = ssrResult;
+					const {content, ttRenderMs} = ssrResult;
 					if (cacheFile !== undefined) {
 						console.log(`caching version at ${cacheFile}`);
 						await mkdirRecursivePromise(path.dirname(cacheFile));
-						await writeFilePromise(cacheFile, html);
+						await writeFilePromise(cacheFile, content);
 					}
 					// Add Server-Timing! See https://w3c.github.io/server-timing/.
 					res.set('Server-Timing', `Prerender;dur=${ttRenderMs};desc="Headless render time (ms)"`);
-					return res.status(200).send(html); // Serve prerendered page as response.
+					return res.status(200).send(content); // Serve prerendered page as response.
 				} else {
 					return res.status(500).send('Error: server-side rendering Mavo page timed out!');
 				}
@@ -372,7 +377,7 @@ require('yargs').command({
 		makeStaticAppAndGetPort(argv.pathToSite, argv.staticPort).then(async (staticPort) => {
 			const localServer = `http://localhost:${staticPort}/`;
 			const urlPath = argv.urlPath;
-			const {html, ttRenderMs} = await ssr(`${localServer}${urlPath}`, {
+			const {content, ttRenderMs} = await ssr(`${localServer}${urlPath}`, {
 				colorDebug: argv.colorDebug,
 				headless: argv.headless,
 				pollTimeout: argv.pollTimeout,
@@ -380,7 +385,7 @@ require('yargs').command({
 				verbose: argv.verbose,
 			});
 			const file = urlPath.replace(/[^-_.a-zA-Z0-9]/g, "_");
-			await writeFilePromise(`./${file}`, html);
+			await writeFilePromise(`./${file}`, content);
 		});
 	},
 }).demandCommand().recommendCommands().strict().argv;
