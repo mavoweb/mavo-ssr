@@ -8,7 +8,13 @@ In brief: typical Mavo apps are served with no content; the content is rendered 
 Usage
 -----
 
-Install [Node](https://nodejs.org/) at least version 8 to use. Then, if your Mavo site is in the folder `/path/to/your/site`, you can run the simplest server like this:
+Install [Node](https://nodejs.org/) (at least version 8) and [npm](https://www.npmjs.com/). Run
+
+```
+$ npm install
+```
+
+to install dependencies. Then, if your Mavo site is in the folder `/path/to/your/site`, you can run the simplest server like this:
 
 ```
 $ node server.js serve /path/to/your/site
