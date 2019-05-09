@@ -1,13 +1,11 @@
-// https://developers.google.com/web/tools/puppeteer/articles/ssr
-
 const express = require('express');
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
 const httpProxy = require('http-proxy');
 
-// weak promise wrappers for fs functions
-// these are available in v10.0 but installing it is annoying
+// Simple promise wrappers for fs functions. (These are available in node v10,
+// but installing it is annoying.)
 const mkdirPromise = (path) => (new Promise((resolve, reject) => (fs.mkdir(path, {recursive: true}, (err) => {
 	if (err) {
 		reject(err);
@@ -45,6 +43,8 @@ const writeFilePromise = (path, data) => (new Promise((resolve, reject) => (fs.w
 	}
 }))));
 
+// Given an app and a port, try to make it listen to one of the first 10 ports
+// after (including) the port number.
 const makeListenToFreePort = (app, message, firstPort, doUnref) => {
 	let ret = Promise.reject();
 	for (let portOffset = 0; portOffset < 10; portOffset++) {
@@ -70,7 +70,6 @@ const makeListenToFreePort = (app, message, firstPort, doUnref) => {
 
 const makeClientScript = (options) => `
 Mavo.hooks.add("init-start", function (mavo) {
-	// debugger;
 	var ssrTemplate = document.getElementById("mv-ssr-template");
 	if (ssrTemplate) {
 		// var oldDisplay;
@@ -126,6 +125,8 @@ async function ssr(url, options) {
 	const browser = await puppeteer.launch({headless: options.headless});
 	const page = await browser.newPage();
 
+	// Closely follows
+	// https://developers.google.com/web/tools/puppeteer/articles/ssr
 	// 1. Intercept network requests.
 	await page.setRequestInterception(true);
 
@@ -141,7 +142,6 @@ async function ssr(url, options) {
 		req.continue();
 	});
 
-	// debugging
 	if (options.verbose) {
 		page.on('console', msg => console.log('PAGE LOG:', msg.text()));
 	}
@@ -198,7 +198,7 @@ async function ssr(url, options) {
 					// mv-app attribute as that might mess with CSS
 					// selectors
 
-					// requires Mavo support for something like this
+					// (requires Mavo support)
 					element.classList.add("mv-no-hiding-during-loading");
 				}
 				const templateElement = document.createElement("template");
@@ -389,18 +389,3 @@ require('yargs').command({
 		});
 	},
 }).demandCommand().recommendCommands().strict().argv;
-// we could make a server that prerenders as a service
-//
-// try mutationobserver? (see prerender.io tweet)
-// / test multiple apps
-// separate template tag per app?
-// try last child
-//...
-// have a last-resort timeout
-// use cases:
-// 1. run this node server; prerender/cache on demand
-// 2. prerender everything ahead of time
-// can we run everything in the browser?
-//
-// mv-app heuristic, don't prerender if Mavo is not invluded
-// check modified times for cached version vs source
