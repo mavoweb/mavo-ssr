@@ -245,7 +245,9 @@ async function ssr(url, options) {
 			}
 		});
 	}, makeClientScript({pollTimeout: options.pollTimeout}), {colorDebug: options.colorDebug});
-	await page.goto(url, {waitUntil: 'networkidle0'});
+	// as suggested by https://github.com/GoogleChrome/puppeteer/issues/749
+	const response = await page.goto(url, {waitUntil: 'networkidle0'});
+	const rawContent = await response.text();
 	const loadResult = await Promise.race([mvLoadPromise, lastResortTimeout]);
 	await browser.close();
 
@@ -255,9 +257,15 @@ async function ssr(url, options) {
 	} else {
 		const {content, hasMavo} = loadResult;
 		const ttRenderMs = Date.now() - start;
-		console.info(`Headless rendered page ${url} (${hasMavo ? "with" : "without"} Mavo) to ${content.length} chars in ${ttRenderMs}ms`);
+		if (hasMavo || options.renderNonMavo) {
+			console.info(`Headless rendered page ${url} (${hasMavo ? "with" : "without"} Mavo) to ${content.length} chars in ${ttRenderMs}ms`);
 
-		return {content, hasMavo, ttRenderMs};
+			return {content, hasMavo, ttRenderMs};
+		} else {
+			console.info(`Headless detected no Mavo; returned page ${url} with ${rawContent.length} chars in ${ttRenderMs}ms`);
+
+			return {content: rawContent, hasMavo, ttRenderMs};
+		}
 	}
 }
 
@@ -292,6 +300,10 @@ const addSSROptions = (yargs) => {
 		describe: "how long to wait before aborting rendering, in milliseconds",
 		default: 30000,
 		type: 'number',
+	});
+	yargs.option('render-non-mavo', {
+		describe: "render even pages that don't seem to have Mavo",
+		type: 'boolean',
 	});
 	yargs.option('verbose', {
 		describe: "print more things",
@@ -347,6 +359,7 @@ require('yargs').command({
 					headless: argv.headless,
 					pollTimeout: argv.pollTimeout,
 					lastResortTimeout: argv.lastResortTimeout,
+					renderNonMavo: argv.renderNonMavo,
 					verbose: argv.verbose,
 				});
 				if (ssrResult) {
@@ -382,6 +395,7 @@ require('yargs').command({
 				headless: argv.headless,
 				pollTimeout: argv.pollTimeout,
 				lastResortTimeout: argv.lastResortTimeout,
+				renderNonMavo: argv.renderNonMavo,
 				verbose: argv.verbose,
 			});
 			const file = urlPath.replace(/[^-_.a-zA-Z0-9]/g, "_");
