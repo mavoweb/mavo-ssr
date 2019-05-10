@@ -311,7 +311,7 @@ const addSSROptions = (yargs) => {
 	});
 };
 
-require('yargs').command({
+require('yargs').strict().command({
 	command: "serve <path>",
 	desc: "statically serve a Mavo site",
 	builder: (yargs) => {
