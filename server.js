@@ -276,17 +276,16 @@ const makeStaticAppAndGetPort = (path, staticPort) => {
 	return makeListenToFreePort(staticApp, "static server", 8000, true);
 };
 
-const prerender = (pathToSite, urlPath, options) => {
-	makeStaticAppAndGetPort(pathToSite, options.staticPort).then(async (staticPort) => {
-		const localServer = `http://localhost:${staticPort}/`;
-		return ssr(`${localServer}${urlPath}`, {
-			colorDebug: options.colorDebug,
-			headless: options.headless,
-			pollTimeout: options.pollTimeout,
-			lastResortTimeout: options.lastResortTimeout,
-			renderNonMavo: options.renderNonMavo,
-			verbose: options.verbose,
-		});
+const prerender = async (pathToSite, urlPath, options) => {
+	const staticPort = await makeStaticAppAndGetPort(pathToSite, options.staticPort);
+	const localServer = `http://localhost:${staticPort}/`;
+	return ssr(`${localServer}${urlPath}`, {
+		colorDebug: options.colorDebug,
+		headless: options.headless,
+		pollTimeout: options.pollTimeout,
+		lastResortTimeout: options.lastResortTimeout,
+		renderNonMavo: options.renderNonMavo,
+		verbose: options.verbose,
 	});
 };
 
@@ -340,59 +339,58 @@ require('yargs').strict().command({
 			type: 'string',
 		});
 	},
-	handler: (argv) => {
-		makeStaticAppAndGetPort(argv.path, argv.staticPort).then((staticPort) => {
-			const app = express();
+	handler: async (argv) => {
+		const staticPort = await makeStaticAppAndGetPort(argv.path, argv.staticPort);
+		const app = express();
 
-			const localServer = `http://localhost:${staticPort}/`;
-			const apiProxy = httpProxy.createProxyServer();
-			app.all("/dist/*", function(req, res) {
-				if (argv.verbose) {
-					console.log('passing through asset to server: ' + req.path);
-				}
-				apiProxy.web(req, res, {target: localServer});
-			});
-			app.all("/*.(css|jpg|png|svg|js)", function(req, res) {
-				if (argv.verbose) {
-					console.log('passing through asset to server: ' + req.path);
-				}
-				apiProxy.web(req, res, {target: localServer});
-			});
-			app.get('/(*(/|.html))?', async (req, res, next) => {
-				let cacheFile = undefined;
-				if (argv.cache !== undefined) {
-					cacheFile = argv.cache + req.path + (req.path.endsWith('/') ? 'index.html' : '');
-					const cachedContents = await readFilePromise(cacheFile, {encoding: 'utf-8'}).catch(() => undefined);
-					if (cachedContents !== undefined) {
-						console.log(`responding with cached version at ${cacheFile} (${cachedContents.length} chars)`);
-						return res.status(200).send(cachedContents); // Serve cached version.
-					}
-				}
-				const ssrResult = await ssr(`${localServer}${req.path}`, {
-					colorDebug: argv.colorDebug,
-					headless: argv.headless,
-					pollTimeout: argv.pollTimeout,
-					lastResortTimeout: argv.lastResortTimeout,
-					renderNonMavo: argv.renderNonMavo,
-					verbose: argv.verbose,
-				});
-				if (ssrResult) {
-					const {content, ttRenderMs} = ssrResult;
-					if (cacheFile !== undefined) {
-						console.log(`caching version at ${cacheFile}`);
-						await mkdirRecursivePromise(path.dirname(cacheFile));
-						await writeFilePromise(cacheFile, content);
-					}
-					// Add Server-Timing! See https://w3c.github.io/server-timing/.
-					res.set('Server-Timing', `Prerender;dur=${ttRenderMs};desc="Headless render time (ms)"`);
-					return res.status(200).send(content); // Serve prerendered page as response.
-				} else {
-					return res.status(500).send('Error: server-side rendering Mavo page timed out!');
-				}
-			});
-
-			makeListenToFreePort(app, "SSR server", argv.port);
+		const localServer = `http://localhost:${staticPort}/`;
+		const apiProxy = httpProxy.createProxyServer();
+		app.all("/dist/*", function(req, res) {
+			if (argv.verbose) {
+				console.log('passing through asset to server: ' + req.path);
+			}
+			apiProxy.web(req, res, {target: localServer});
 		});
+		app.all("/*.(css|jpg|png|svg|js)", function(req, res) {
+			if (argv.verbose) {
+				console.log('passing through asset to server: ' + req.path);
+			}
+			apiProxy.web(req, res, {target: localServer});
+		});
+		app.get('/(*(/|.html))?', async (req, res, next) => {
+			let cacheFile = undefined;
+			if (argv.cache !== undefined) {
+				cacheFile = argv.cache + req.path + (req.path.endsWith('/') ? 'index.html' : '');
+				const cachedContents = await readFilePromise(cacheFile, {encoding: 'utf-8'}).catch(() => undefined);
+				if (cachedContents !== undefined) {
+					console.log(`responding with cached version at ${cacheFile} (${cachedContents.length} chars)`);
+					return res.status(200).send(cachedContents); // Serve cached version.
+				}
+			}
+			const ssrResult = await ssr(`${localServer}${req.path}`, {
+				colorDebug: argv.colorDebug,
+				headless: argv.headless,
+				pollTimeout: argv.pollTimeout,
+				lastResortTimeout: argv.lastResortTimeout,
+				renderNonMavo: argv.renderNonMavo,
+				verbose: argv.verbose,
+			});
+			if (ssrResult) {
+				const {content, ttRenderMs} = ssrResult;
+				if (cacheFile !== undefined) {
+					console.log(`caching version at ${cacheFile}`);
+					await mkdirRecursivePromise(path.dirname(cacheFile));
+					await writeFilePromise(cacheFile, content);
+				}
+				// Add Server-Timing! See https://w3c.github.io/server-timing/.
+				res.set('Server-Timing', `Prerender;dur=${ttRenderMs};desc="Headless render time (ms)"`);
+				return res.status(200).send(content); // Serve prerendered page as response.
+			} else {
+				return res.status(500).send('Error: server-side rendering Mavo page timed out!');
+			}
+		});
+
+		makeListenToFreePort(app, "SSR server", argv.port);
 	},
 }).command({
 	command: "prerender <path-to-site> <url-path>",
