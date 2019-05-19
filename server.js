@@ -276,6 +276,20 @@ const makeStaticAppAndGetPort = (path, staticPort) => {
 	return makeListenToFreePort(staticApp, "static server", 8000, true);
 };
 
+const prerender = (pathToSite, urlPath, options) => {
+	makeStaticAppAndGetPort(pathToSite, options.staticPort).then(async (staticPort) => {
+		const localServer = `http://localhost:${staticPort}/`;
+		return ssr(`${localServer}${urlPath}`, {
+			colorDebug: options.colorDebug,
+			headless: options.headless,
+			pollTimeout: options.pollTimeout,
+			lastResortTimeout: options.lastResortTimeout,
+			renderNonMavo: options.renderNonMavo,
+			verbose: options.verbose,
+		});
+	});
+};
+
 const addSSROptions = (yargs) => {
 	yargs.option('static-port', {
 		default: 8000,
@@ -386,20 +400,9 @@ require('yargs').strict().command({
 	builder: (yargs) => {
 		addSSROptions(yargs);
 	},
-	handler: (argv) => {
-		makeStaticAppAndGetPort(argv.pathToSite, argv.staticPort).then(async (staticPort) => {
-			const localServer = `http://localhost:${staticPort}/`;
-			const urlPath = argv.urlPath;
-			const {content, ttRenderMs} = await ssr(`${localServer}${urlPath}`, {
-				colorDebug: argv.colorDebug,
-				headless: argv.headless,
-				pollTimeout: argv.pollTimeout,
-				lastResortTimeout: argv.lastResortTimeout,
-				renderNonMavo: argv.renderNonMavo,
-				verbose: argv.verbose,
-			});
-			const file = urlPath.replace(/[^-_.a-zA-Z0-9]/g, "_");
-			await writeFilePromise(`./${file}`, content);
-		});
+	handler: async (argv) => {
+		const {content, ttRenderMs} = await prerender(argv.pathToSite, argv.urlPath, argv);
+		const file = argv.urlPath.replace(/[^-_.a-zA-Z0-9]/g, "_");
+		await writeFilePromise(`./${file}`, content);
 	},
 }).demandCommand().recommendCommands().strict().argv;
