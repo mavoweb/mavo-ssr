@@ -116,8 +116,16 @@ async function render(url, options) {
 	let mvLoadResolve;
 	const mvLoadPromise = new Promise((resolve) => { mvLoadResolve = resolve; });
 	// https://github.com/GoogleChrome/puppeteer/blob/master/examples/custom-event.js
+	// for some reason, a script is causing evaluateOnNewDocument to fire twice
+	// and the second time there's no Mavo, so let's make the first time lock
+	// it in; cf. https://github.com/mavoweb/mavo-ssr/issues/4
+	let lockedHasMavo = false;
+	await page.exposeFunction('lockHasMavo', () => { lockedHasMavo = true; });
 	await page.exposeFunction('onMvLoad', async (hasMavo) => {
-		mvLoadResolve({ content: await page.content(), hasMavo: hasMavo }); // serialized HTML of page DOM.
+		if (hasMavo || !lockedHasMavo) {
+			// serialized HTML of page DOM.
+			mvLoadResolve({ content: await page.content(), hasMavo: hasMavo });
+		}
 	});
 	// We must wait for exposeFunction to finish before proceeding to
 	// evaluateOnNewDocument below, since it calls the exposed function;
@@ -130,6 +138,7 @@ async function render(url, options) {
 		let rawNodes = {};
 		document.addEventListener("DOMContentLoaded", event => {
 			if (self.Mavo) {
+				window.lockHasMavo();
 				self.Mavo.hooks.add("init-start", mavo => {
 					const clone = mavo.element.cloneNode(true /*deep*/);
 					rawNodes[mavo.id] = clone;
