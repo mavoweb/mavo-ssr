@@ -79,6 +79,8 @@ Mavo.hooks.add("init-start", function (mavo) {
 `;
 
 async function render(url, options) {
+	if (!options) options = {};
+
 	const start = Date.now();
 	const browser = await puppeteer.launch({headless: options.headless});
 	const page = await browser.newPage();
